@@ -154,8 +154,10 @@ int main(int argc, char *argv[ ]){
         if(!both) {	
 			both = cvCreateImage(cvSize(image->width*2,image->height),image->depth,image->nChannels);
 		}
+  
+		cvSmooth( image, edges, CV_BLUR, 5,5,0,0 );
 
-		cvCanny(image,edges,1.0,1.0,3);
+		cvCanny(edges,edges,1.0,1.0,3);
 
 		char text[200];
 		sprintf(
