@@ -68,23 +68,20 @@
 //    return focusMeasure;
 //}
 
-//short GetSharpness(char* data, unsigned int width, unsigned int height)
-CvScalar GetSharpness(IplImage* in)
+CvScalar GetSharpness(IplImage* in, IplImage* drawHist=0)
 {
 	const  short history_size           = 5;
     static short history_index          = 0;
-    static short history[5];//  = {0,0,0,0,0};
+    static short history[5];
 
-    // assumes that your image is already in planner yuv or 8 bit greyscale
-//    IplImage* in = cvCreateImage(cvSize(width,height),IPL_DEPTH_8U,1);
+    static IplImage* data = 0;
     static IplImage* out = 0;
     static IplImage* out_8bit = 0;
 
 	if( ! out ) {
-        out=cvCreateImage(cvSize(in->width,in->height),IPL_DEPTH_16S,1);
-		out_8bit=cvCreateImage(cvSize(in->width,in->height),IPL_DEPTH_8U,1);
+        out=cvCreateImage(cvSize(in->roi->width,in->roi->height),IPL_DEPTH_16S,1);
+		out_8bit=cvCreateImage(cvSize(in->roi->width,in->roi->height),IPL_DEPTH_8U,1);
     }
-//    memcpy(in->imageData,data,width*height);
 
     // aperture size of 1 corresponds to the correct matrix
     cvLaplace(in, out, 1);
@@ -96,11 +93,9 @@ CvScalar GetSharpness(IplImage* in)
     for(i=0;i<(out->imageSize/2);i++)
     {
         if(abs(imgData[i]) > maxLap) maxLap = abs(imgData[i]);
-//		if(abs(imgData[i]) > 240) in->imageData[i]=255;
-//		if(abs(imgData[i]) < 50) in->imageData[i]=0;
 		avg += abs(imgData[i]);
     }
-	avg /= in->imageSize;
+	avg /= out->imageSize;
 
 	history[history_index++] = maxLap;
     history_index = (history_index + 1) % history_size;
@@ -110,34 +105,34 @@ CvScalar GetSharpness(IplImage* in)
 	}
     mean /= history_size;
 
-    cvConvertScale(out,out_8bit);
+	if(drawHist) {
+        cvConvertScale(out,out_8bit);
 
-	CvHistogram* hist;
-	int hist_size[] = { 256 };
-	float ranges_1[] = { 0, 256 };
-	float* ranges[] = { ranges_1 };
-	hist = cvCreateHist( 1, hist_size, CV_HIST_ARRAY, ranges, 1 );
+	    CvHistogram* hist;
+	    int hist_size[] = { 256 };
+	    float ranges_1[] = { 0, 256 };
+	    float* ranges[] = { ranges_1 };
+	    hist = cvCreateHist( 1, hist_size, CV_HIST_ARRAY, ranges, 1 );
 
-	cvCalcHist( &out_8bit, hist, 0, 0 ); // Compute histogram
-	cvNormalizeHist( hist, 20*255 ); // Normalize it
+	    cvCalcHist( &out_8bit, hist, 0, 0 ); // Compute histogram
+	    cvNormalizeHist( hist, 20*255 ); // Normalize it
 
-    // populate the visualization
-	float max_value = 0;
-	cvGetMinMaxHistValue( hist, 0, &max_value, 0, 0 );
+        // populate the visualization
+	    float max_value = 0;
+	    cvGetMinMaxHistValue( hist, 0, &max_value, 0, 0 );
 
-	for( int s = 0; s < 256; s++ ){
-		float bin_val = cvQueryHistValue_1D( hist, s );
-		cvRectangle( in, cvPoint( 150+s, 480 ),
-				cvPoint( 150+s, 480- (bin_val/max_value*100)),
-				CV_RGB( 0, 0, 0 ),
-				CV_FILLED );
-	}
+	    for( int s = 0; s < 256; s++ ){
+	    	float bin_val = cvQueryHistValue_1D( hist, s );
+			if(bin_val>0.0) {
+				cvRectangle( drawHist, cvPoint( s, 100 ),
+						cvPoint( s, 100- (bin_val/max_value*100)),
+						CV_RGB( 0, 255, 0 ),
+						CV_FILLED );
+			}
+	    }
 
-	cvReleaseHist(&hist);
-
-
-//    cvReleaseImage(&in);
-//    cvReleaseImage(&out);
+	    cvReleaseHist(&hist);
+    }
 
 	CvScalar r;
 	r.val[0] = mean;
@@ -145,23 +140,18 @@ CvScalar GetSharpness(IplImage* in)
 	return r;
 }
 
-int main(int argc, char *argv[ ]){
+int main(int argc, char *argv[ ])
+{
+	char SETTINGS_FILE[]="settings.txt";
 
 	RASPIVID_CONFIG * config = (RASPIVID_CONFIG*)malloc(sizeof(RASPIVID_CONFIG));
 	
-//	config->width=640;
-//	config->height=480;
-	//config->width=1920;
-	//config->height=1080;
 	config->width=2592;
 	config->height=1944;
 	config->bitrate=0;	// zero: leave as default
 	config->framerate=15;
 	config->monochrome=1;
 
-	/*
-	Could also use hard coded defaults method: raspiCamCvCreateCameraCapture(0)
-	*/
     RaspiCamCvCapture * capture = (RaspiCamCvCapture *) raspiCamCvCreateCameraCapture2(0, config); 
 	free(config);
 	
@@ -172,76 +162,116 @@ int main(int argc, char *argv[ ]){
 
 	cvInitFont(&font, CV_FONT_HERSHEY_SIMPLEX|CV_FONT_ITALIC, hScale, vScale, 0, lineWidth, 8);
 
-	IplImage* edges =0;
-	IplImage* both =0;
-    IplImage* image =0;
+	IplImage* both  = 0;
+    IplImage* image = 0;
 
 	cvNamedWindow("RaspiCamTest", 1);
 	cvMoveWindow("RaspiCamTest", 100,100);
+
+	int viewport_x = 0;
+	int viewport_y = -400;
+	int viewport_width = 640;
+	int viewport_height = 480;
+
+	CvScalar sharpness= {100, 5.0, 1.0, .10};
+
+	int flip=0;
+
+	FILE * f = fopen(SETTINGS_FILE,"r");
+	if(f) {
+		fscanf(f,"%d %d %d\n",&viewport_x,&viewport_y,&flip);
+		fclose(f);
+	}
+
 	int exit =0;
 	do {
 		IplImage* big_img = raspiCamCvQueryFrame(capture);
-		//short sharpness = GetSharpness(image->imageData,image->width, image->height);
         if(!image) {	
-			image = cvCreateImage(cvSize(640,480),big_img->depth,big_img->nChannels);
+			image = cvCreateImage( cvSize(viewport_width, viewport_height), big_img->depth,3 );
 		}
 
-		CvRect cropRect=cvRect((big_img->width-640)/2,(big_img->height-480)/2-400,640,480);
+		CvRect cropRect = cvRect( (big_img->width-viewport_width)/2+viewport_x
+                                 ,(big_img->height-viewport_height)/2+viewport_y
+                                 ,viewport_width ,viewport_height );
 		cvSetImageROI(big_img,cropRect);
-		cvCopy(big_img,image,NULL);
+		CvRect destRect=cvRect(0,0,viewport_width,viewport_height);
+		cvSetImageROI(image,destRect);
+		cvCvtColor(big_img,image,CV_GRAY2BGR);
 
-		CvScalar sharpness = GetSharpness(image);
-		double threshold=3.2;
+		destRect=cvRect(0,0,viewport_width,viewport_height);
+		cvSetImageROI(image,destRect);
 
-
-        if(!edges) {	
-			edges = cvCreateImage(cvSize(image->width,image->height),image->depth,image->nChannels);
-		}
-//        if(!both) {	
-//			both = cvCreateImage(cvSize(image->width*2,image->height),image->depth,image->nChannels);
-//		}
-  
-		//cvSmooth( image, edges, CV_BLUR, 5,5,0,0 );
-		//cvCanny(edges,edges,1.0,1.0,3);
+		sharpness = GetSharpness(big_img,image);
+		double threshold=5.0;
 
 		char text[200];
-//		sprintf(
-//			text
-//			, "w=%.0f h=%.0f fps=%.0f bitrate=%.0f monochrome=%.0f"
-//			, raspiCamCvGetCaptureProperty(capture, RPI_CAP_PROP_FRAME_WIDTH)
-//			, raspiCamCvGetCaptureProperty(capture, RPI_CAP_PROP_FRAME_HEIGHT)
-//			, raspiCamCvGetCaptureProperty(capture, RPI_CAP_PROP_FPS)
-//			, raspiCamCvGetCaptureProperty(capture, RPI_CAP_PROP_BITRATE)
-//			, raspiCamCvGetCaptureProperty(capture, RPI_CAP_PROP_MONOCHROME)
-//		);
-//		cvPutText (image, text, cvPoint(05, 40), &font, cvScalar(255, 255, 0, 0));
-
 		sprintf(text , (sharpness.val[1]>threshold ? "** OK **" : "!! keep going !!" ) );	
-		cvPutText (image, text, cvPoint(05, 40), &font, cvScalar(255, 255, 0, 0));
+		cvPutText (image, text, cvPoint(05, 400), &font, cvScalar(255, 255, 0, 0));
+		sprintf(text, "Sharpness: %f (%f) x=%d y=%d", sharpness.val[0], sharpness.val[1], viewport_x, viewport_y);
+		cvPutText (image, text, cvPoint(05, 440), &font, cvScalar(255, 255, 0, 0));
 
-		sprintf(text, "Sharpness: %f (%f)", sharpness.val[0], sharpness.val[1]);
-		cvPutText (image, text, cvPoint(05, 80), &font, cvScalar(255, 255, 0, 0));
+		cvLine( image, cvPoint(0,240), cvPoint(639,240), CV_RGB( 255, 0, 0 ));
+		cvLine( image, cvPoint(320,0), cvPoint(320,479),   CV_RGB( 255, 0, 0 ));
+		cvCircle( image, cvPoint(320,240), 100,   CV_RGB( 255, 0, 0 ));
 
-//        cvSetImageROI(both, cvRect(0,0,image->width,image->height));
-//		cvCopy(image,both,0);			
-//        cvSetImageROI(both, cvRect(image->width,0,image->width,image->height));
-//		cvCopy(edges,both,0);			
-//        cvSetImageROI(both, cvRect(0,0,image->width*2,image->height));
-	
+		if(flip) {
+			cvFlip(image);
+		}
+
+
 		cvShowImage("RaspiCamTest", image);
+
 		
 		char key = cvWaitKey(10);
 		
 		switch(key)	
 		{
+			case 81:        //left
+				viewport_x -= 10;
+				break;
+			case 82:        //up
+				viewport_y -= 10;
+				break;
+			case 83:        //right
+				viewport_x += 10;
+				break;
+			case 84:        //down
+				viewport_y += 10;
+				break;
+
+
+			case 's':       //save current position
+			{
+				FILE *f = fopen(SETTINGS_FILE,"w");
+				if(f) {
+					fprintf(f,"%d %d %d\n",viewport_x,viewport_y,flip);
+					fclose(f);
+				}
+				break;
+			}
+
+
+			case 'r':       //read position
+            {
+				FILE *f = fopen(SETTINGS_FILE,"r");
+				if(f) {
+					fscanf(f,"%d %d %d\n",&viewport_x,&viewport_y,&flip);
+					fclose(f);
+				}
+
+				break;
+			}
+
+			case 'c':
+				viewport_x=viewport_y=0;
+				break;
+
+			case 'f':
+				flip = !flip;
+				break;
+
 			case 27:		// Esc to exit
 				exit = 1;
-				break;
-			case 60:		// < (less than)
-				raspiCamCvSetCaptureProperty(capture, RPI_CAP_PROP_FPS, 25);	// Currently NOOP
-				break;
-			case 62:		// > (greater than)
-				raspiCamCvSetCaptureProperty(capture, RPI_CAP_PROP_FPS, 30);	// Currently NOOP
 				break;
 		}
 		
