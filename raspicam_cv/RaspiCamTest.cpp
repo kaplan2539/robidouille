@@ -78,9 +78,11 @@ CvScalar GetSharpness(IplImage* in)
     // assumes that your image is already in planner yuv or 8 bit greyscale
 //    IplImage* in = cvCreateImage(cvSize(width,height),IPL_DEPTH_8U,1);
     static IplImage* out = 0;
+    static IplImage* out_8bit = 0;
 
 	if( ! out ) {
         out=cvCreateImage(cvSize(in->width,in->height),IPL_DEPTH_16S,1);
+		out_8bit=cvCreateImage(cvSize(in->width,in->height),IPL_DEPTH_8U,1);
     }
 //    memcpy(in->imageData,data,width*height);
 
@@ -108,6 +110,32 @@ CvScalar GetSharpness(IplImage* in)
 	}
     mean /= history_size;
 
+    cvConvertScale(out,out_8bit);
+
+	CvHistogram* hist;
+	int hist_size[] = { 256 };
+	float ranges_1[] = { 0, 256 };
+	float* ranges[] = { ranges_1 };
+	hist = cvCreateHist( 1, hist_size, CV_HIST_ARRAY, ranges, 1 );
+
+	cvCalcHist( &out_8bit, hist, 0, 0 ); // Compute histogram
+	cvNormalizeHist( hist, 20*255 ); // Normalize it
+
+    // populate the visualization
+	float max_value = 0;
+	cvGetMinMaxHistValue( hist, 0, &max_value, 0, 0 );
+
+	for( int s = 0; s < 256; s++ ){
+		float bin_val = cvQueryHistValue_1D( hist, s );
+		cvRectangle( in, cvPoint( 150+s, 480 ),
+				cvPoint( 150+s, 480- (bin_val/max_value*100)),
+				CV_RGB( 0, 0, 0 ),
+				CV_FILLED );
+	}
+
+	cvReleaseHist(&hist);
+
+
 //    cvReleaseImage(&in);
 //    cvReleaseImage(&out);
 
@@ -128,7 +156,7 @@ int main(int argc, char *argv[ ]){
 	config->width=2592;
 	config->height=1944;
 	config->bitrate=0;	// zero: leave as default
-	config->framerate=0;
+	config->framerate=15;
 	config->monochrome=1;
 
 	/*
@@ -149,6 +177,7 @@ int main(int argc, char *argv[ ]){
     IplImage* image =0;
 
 	cvNamedWindow("RaspiCamTest", 1);
+	cvMoveWindow("RaspiCamTest", 100,100);
 	int exit =0;
 	do {
 		IplImage* big_img = raspiCamCvQueryFrame(capture);
@@ -162,7 +191,7 @@ int main(int argc, char *argv[ ]){
 		cvCopy(big_img,image,NULL);
 
 		CvScalar sharpness = GetSharpness(image);
-		double threshold=250.0;
+		double threshold=3.2;
 
 
         if(!edges) {	
@@ -187,10 +216,10 @@ int main(int argc, char *argv[ ]){
 //		);
 //		cvPutText (image, text, cvPoint(05, 40), &font, cvScalar(255, 255, 0, 0));
 
-		sprintf(text , (sharpness.val[0]>threshold ? "** OK **" : "!! keep going !!" ) );	
+		sprintf(text , (sharpness.val[1]>threshold ? "** OK **" : "!! keep going !!" ) );	
 		cvPutText (image, text, cvPoint(05, 40), &font, cvScalar(255, 255, 0, 0));
 
-		sprintf(text, "Sharpness: %f (%f) -- Press ESC to exit", sharpness.val[0], sharpness.val[1]);
+		sprintf(text, "Sharpness: %f (%f)", sharpness.val[0], sharpness.val[1]);
 		cvPutText (image, text, cvPoint(05, 80), &font, cvScalar(255, 255, 0, 0));
 
 //        cvSetImageROI(both, cvRect(0,0,image->width,image->height));
