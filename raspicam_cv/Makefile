@@ -43,6 +43,9 @@ TARGETS = libraspicamcv.a raspicamtest libraspicamcv.so
 
 all: $(TARGETS)
 
+$(OBJS)/RaspiCamTest.o: RaspiCamTest.cpp
+	gcc -c $(CFLAGS) $< -o $@
+
 $(OBJS)/%.o: %.c
 	gcc -c $(CFLAGS) $< -o $@
 
@@ -55,8 +58,8 @@ libraspicamcv.a: $(RASPICAMCV_OBJS)
 libraspicamcv.so: $(RASPICAMCV_OBJS)
 	gcc -shared -o libraspicamcv.so $+ -Wl,-whole-archive $(LDFLAGS_PI) -lopencv_core -lopencv_highgui -Wl,-no-whole-archive
 
-raspicamtest: $(RASPICAMTEST_OBJS) libraspicamcv.a
-	gcc $(LDFLAGS) $+ $(LDFLAGS2) -L. libraspicamcv.a -o $@
+raspicamtest: RaspiCamTest.cpp libraspicamcv.a
+	gcc $(CFLAGS) $(LDFLAGS) $+ $(LDFLAGS2) -L. libraspicamcv.a -o $@
 
 clean:
 	rm -f $(OBJS)/* $(TARGETS)
