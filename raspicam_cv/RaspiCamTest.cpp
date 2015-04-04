@@ -146,8 +146,10 @@ int main(int argc, char *argv[ ])
 
 	RASPIVID_CONFIG * config = (RASPIVID_CONFIG*)malloc(sizeof(RASPIVID_CONFIG));
 	
-	config->width=2592;
-	config->height=1944;
+	int full_width=2592;
+	int full_height=1944;
+	config->width=full_width;
+	config->height=full_height;
 	config->bitrate=0;	// zero: leave as default
 	config->framerate=15;
 	config->monochrome=1;
@@ -162,7 +164,7 @@ int main(int argc, char *argv[ ])
 
 	cvInitFont(&font, CV_FONT_HERSHEY_SIMPLEX|CV_FONT_ITALIC, hScale, vScale, 0, lineWidth, 8);
 
-	IplImage* both  = 0;
+	IplImage* tmp  = 0;
     IplImage* image = 0;
 
 	cvNamedWindow("RaspiCamTest", 1);
@@ -176,6 +178,7 @@ int main(int argc, char *argv[ ])
 	CvScalar sharpness= {100, 5.0, 1.0, .10};
 
 	int flip=0;
+	int full_view=0;
 
 	FILE * f = fopen(SETTINGS_FILE,"r");
 	if(f) {
@@ -189,57 +192,132 @@ int main(int argc, char *argv[ ])
         if(!image) {	
 			image = cvCreateImage( cvSize(viewport_width, viewport_height), big_img->depth,3 );
 		}
+        if(!tmp) {	
+			tmp = cvCreateImage( cvSize(viewport_width, viewport_height), big_img->depth,1 );
+		}
 
-		CvRect cropRect = cvRect( (big_img->width-viewport_width)/2+viewport_x
-                                 ,(big_img->height-viewport_height)/2+viewport_y
-                                 ,viewport_width ,viewport_height );
-		cvSetImageROI(big_img,cropRect);
-		CvRect destRect=cvRect(0,0,viewport_width,viewport_height);
-		cvSetImageROI(image,destRect);
-		cvCvtColor(big_img,image,CV_GRAY2BGR);
+		if(!full_view) {
+			CvRect cropRect = cvRect( (big_img->width-viewport_width)/2+viewport_x
+					,(big_img->height-viewport_height)/2+viewport_y
+					,viewport_width ,viewport_height );
+			cvSetImageROI(big_img,cropRect);
+			CvRect destRect=cvRect(0,0,viewport_width,viewport_height);
+			cvSetImageROI(image,destRect);
+			cvCvtColor(big_img,image,CV_GRAY2BGR);
 
-		destRect=cvRect(0,0,viewport_width,viewport_height);
-		cvSetImageROI(image,destRect);
+			destRect=cvRect(0,0,viewport_width,viewport_height);
+			cvSetImageROI(image,destRect);
+		} else {
+			CvRect cropRect = cvRect( 0,0, full_width, full_height );
+			cvSetImageROI(big_img,cropRect);
+			cvRectangle(big_img
+             ,cvPoint((big_img->width-viewport_width)/2+viewport_x,
+		   	          (big_img->height-viewport_height)/2+viewport_y)
+             ,cvPoint((big_img->width+viewport_width)/2+viewport_x,
+		   	          (big_img->height+viewport_height)/2+viewport_y)
+			 ,CV_RGB( 0, 255, 0 ));
+  
+			cvResize(big_img,tmp);
+			cvCvtColor(tmp,image,CV_GRAY2BGR);
+		}
+
+
+		if(flip) {
+			cvFlip(image,0,-1);
+		}
 
 		sharpness = GetSharpness(big_img,image);
-		double threshold=5.0;
+		double threshold=2.8;
 
 		char text[200];
+
+		if(full_view) {
+			sprintf(text , "full view" );	
+			cvPutText (image, text, cvPoint(05, 360), &font, cvScalar(255, 0, 0, 0));
+		}
 		sprintf(text , (sharpness.val[1]>threshold ? "** OK **" : "!! keep going !!" ) );	
-		cvPutText (image, text, cvPoint(05, 400), &font, cvScalar(255, 255, 0, 0));
-		sprintf(text, "Sharpness: %f (%f) x=%d y=%d", sharpness.val[0], sharpness.val[1], viewport_x, viewport_y);
-		cvPutText (image, text, cvPoint(05, 440), &font, cvScalar(255, 255, 0, 0));
+		cvPutText (image, text, cvPoint(05, 400), &font, cvScalar(255, 0, 0, 0));
+		sprintf(text, "Sharpness: %.0f (%.2f) x=%d y=%d", sharpness.val[0], sharpness.val[1], viewport_x, viewport_y);
+		cvPutText (image, text, cvPoint(05, 440), &font, cvScalar(255, 0, 0, 0));
 
 		cvLine( image, cvPoint(0,240), cvPoint(639,240), CV_RGB( 255, 0, 0 ));
 		cvLine( image, cvPoint(320,0), cvPoint(320,479),   CV_RGB( 255, 0, 0 ));
 		cvCircle( image, cvPoint(320,240), 100,   CV_RGB( 255, 0, 0 ));
-
-		if(flip) {
-			cvFlip(image);
-		}
 
 
 		cvShowImage("RaspiCamTest", image);
 
 		
 		char key = cvWaitKey(10);
-		
-		switch(key)	
-		{
+	
+
+		if(flip) {	
+			switch(key)	
+			{
+				case 83:        //left
+					viewport_x -= 10;
+
+					if(viewport_x<-(full_width-viewport_width)/2) {
+						viewport_x=-(full_width-viewport_width)/2;
+					}
+					break;
+				case 84:        //up
+					viewport_y -= 10;
+					if(viewport_y< -(full_height-viewport_height)/2) {
+						viewport_y=-(full_height-viewport_height)/2;
+					}
+					break;
+				case 81:        //right
+					viewport_x += 10;
+					if(viewport_x>  (full_width-viewport_width)/2) {
+						viewport_x= (full_width-viewport_width)/2;
+					}
+					break;
+				case 82:        //down
+					viewport_y += 10;
+					if(viewport_x>  (full_height-viewport_height)/2) {
+						viewport_x= (full_height-viewport_height)/2;
+					}
+					break;
+
+			}
+
+		} else {
+			switch(key)	
+			{
 			case 81:        //left
-				viewport_x -= 10;
-				break;
+					viewport_x -= 10;
+
+					if(viewport_x<-(full_width-viewport_width)/2) {
+						viewport_x=-(full_width-viewport_width)/2;
+					}
+					break;
+
 			case 82:        //up
 				viewport_y -= 10;
+				if(viewport_y< -(full_height-viewport_height)/2) {
+					viewport_y=-(full_height-viewport_height)/2;
+				}
 				break;
 			case 83:        //right
 				viewport_x += 10;
+				if(viewport_x>  (full_width-viewport_width)/2) {
+					viewport_x= (full_width-viewport_width)/2;
+				}
 				break;
 			case 84:        //down
 				viewport_y += 10;
+				if(viewport_x>  (full_height-viewport_height)/2) {
+					viewport_x= (full_height-viewport_height)/2;
+				}
 				break;
 
+			}
 
+		}
+
+		switch(key)	
+		{
 			case 's':       //save current position
 			{
 				FILE *f = fopen(SETTINGS_FILE,"w");
@@ -268,6 +346,10 @@ int main(int argc, char *argv[ ])
 
 			case 'f':
 				flip = !flip;
+				break;
+
+			case 'x':
+				system("sudo halt");
 				break;
 
 			case 27:		// Esc to exit
